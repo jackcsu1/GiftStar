@@ -106,11 +106,14 @@ const run = (db: D1Database, sql: string, ...args: unknown[]) => db.prepare(sql)
 
 const PUBLIC_PERSON = "id, name, household, is_kid, sort";
 
-// Some households don't see each other's lists. Bind the viewer's household twice.
+// Some households don't see each other's lists, and some people don't see a
+// whole household. Bind with hiddenArgs(me).
 const HIDDEN_FROM = (alias: string) =>
-  `EXISTS (SELECT 1 FROM household_hidden h
-     WHERE (h.household_a = ? AND h.household_b = ${alias}.household)
-        OR (h.household_b = ? AND h.household_a = ${alias}.household))`;
+  `(EXISTS (SELECT 1 FROM household_hidden h
+      WHERE (h.household_a = ? AND h.household_b = ${alias}.household)
+         OR (h.household_b = ? AND h.household_a = ${alias}.household))
+    OR EXISTS (SELECT 1 FROM person_hidden ph WHERE ph.viewer_id = ? AND ph.household = ${alias}.household))`;
+const hiddenArgs = (me: Person) => [me.household, me.household, me.id];
 
 // ---------- Joining ----------
 
@@ -306,8 +309,7 @@ app.get("/api/home", async (c) => {
       occ,
       occ,
       me.id,
-      me.household,
-      me.household,
+      ...hiddenArgs(me),
     ),
     first(
       c.env.DB,
@@ -438,7 +440,7 @@ app.get("/api/people/:id", async (c) => {
 
 async function visiblePerson(c: C, id: string) {
   const me = c.get("me");
-  const person = await first<Person>(c.env.DB, `SELECT * FROM people WHERE id = ? AND NOT ${HIDDEN_FROM("people")}`, id, me.household, me.household);
+  const person = await first<Person>(c.env.DB, `SELECT * FROM people WHERE id = ? AND NOT ${HIDDEN_FROM("people")}`, id, ...hiddenArgs(me));
   if (!person) fail(404, "We couldn't find that person.");
   return person!;
 }
