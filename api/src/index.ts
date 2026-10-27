@@ -2,6 +2,7 @@ import { Hono, type Context, type Next } from "hono";
 import { cors } from "hono/cors";
 import { unfurl } from "./unfurl";
 import { suggestIdeas, identifyPhoto } from "./ai";
+import { sameThing, similarThing } from "./dupes";
 
 export type Env = {
   DB: D1Database;
@@ -367,9 +368,10 @@ app.get("/api/people/:id", async (c) => {
   const person = await visiblePerson(c, c.req.param("id"));
   const isMe = person.id === me.id;
 
-  const items = await all<Record<string, unknown> & { id: string; deleted_at: number | null }>(
+  const items = await all<Record<string, unknown> & { id: string; title: string; url: string; deleted_at: number | null }>(
     c.env.DB,
-    `SELECT id, title, url, image, price, notes, priority, qty, sort, created_at, deleted_at FROM items
+    `SELECT id, title, url, image, price, notes, priority, qty, sort, created_at, deleted_at,
+       (SELECT name FROM people WHERE id = items.suggested_by) AS suggested_by_name FROM items
      WHERE owner_id = ? AND occasion = ? AND (deleted_at IS NULL OR (? = 0 AND id IN (SELECT item_id FROM claims)))
      ORDER BY sort, created_at`,
     person!.id,
@@ -386,7 +388,8 @@ app.get("/api/people/:id", async (c) => {
   ).map(({ asker_id, ...q }) => ({ ...q, mine: asker_id === me.id }));
 
   if (isMe) {
-    return c.json({ person, isMe, items: items.map(({ deleted_at, ...i }) => i), questions });
+    // The owner never learns an item was also a family idea.
+    return c.json({ person, isMe, items: items.map(({ deleted_at, suggested_by_name, ...i }) => i), questions });
   }
 
   const ids = items.map((i) => i.id);
@@ -434,7 +437,10 @@ app.get("/api/people/:id", async (c) => {
       })(),
     })),
     questions,
-    ideas,
+    ideas: ideas.map((d) => {
+      const twin = items.find((i) => !i.deleted_at && similarThing(i, d as unknown as { title: string; url: string }));
+      return { ...d, similar_item_id: twin?.id ?? null, similar_item_title: twin?.title ?? null };
+    }),
   });
 });
 
@@ -539,6 +545,36 @@ async function othersItem(c: C, id: string) {
   return item!;
 }
 
+type IdeaRow = { id: string; author_id: string; claimer_id: string | null; status: string | null; title: string; url: string };
+
+// Fold a family idea into the person's own wish: carry over any claim so nobody
+// buys it twice, credit whoever suggested it, and drop the separate idea.
+async function mergeIdea(env: Env, idea: IdeaRow, itemId: string) {
+  const stmts = [
+    env.DB.prepare("UPDATE items SET suggested_by = COALESCE(suggested_by, ?) WHERE id = ?").bind(idea.author_id, itemId),
+    env.DB.prepare("DELETE FROM ideas WHERE id = ?").bind(idea.id),
+  ];
+  if (idea.claimer_id) {
+    stmts.unshift(
+      env.DB.prepare(
+        `INSERT INTO claims (id, item_id, claimer_id, qty, status, created_at) VALUES (?, ?, ?, 1, ?, ?)
+         ON CONFLICT (item_id, claimer_id) DO NOTHING`,
+      ).bind(uid(), itemId, idea.claimer_id, idea.status || "reserved", now()),
+    );
+  }
+  await env.DB.batch(stmts);
+}
+
+async function absorbMatchingIdeas(env: Env, ownerId: string, item: { id: string; title: string; url: string }) {
+  const ideas = await all<IdeaRow>(
+    env.DB,
+    "SELECT id, author_id, claimer_id, status, title, url FROM ideas WHERE target_id = ? AND occasion = ?",
+    ownerId,
+    env.OCCASION,
+  );
+  for (const idea of ideas) if (sameThing(item, idea)) await mergeIdea(env, idea, item.id);
+}
+
 app.post("/api/items", async (c) => {
   const f = itemFields(await body(c));
   if (!f.title) fail(400, "Give it a name.");
@@ -551,6 +587,7 @@ app.post("/api/items", async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, c.get("me").id, c.env.OCCASION, f.title, f.url, f.image, f.price, f.notes, f.priority, f.qty, (min?.m ?? 0) - 1, now(),
   );
+  await absorbMatchingIdeas(c.env, c.get("me").id, { id, title: f.title, url: f.url });
   return c.json({ id });
 });
 
@@ -564,6 +601,7 @@ app.patch("/api/items/:id", async (c) => {
     "UPDATE items SET title = ?, url = ?, image = ?, price = ?, notes = ?, priority = ?, qty = ? WHERE id = ?",
     f.title, f.url, f.image, f.price, f.notes, f.priority, f.qty, item.id,
   );
+  await absorbMatchingIdeas(c.env, c.get("me").id, { id: item.id, title: f.title, url: f.url });
   return c.json({ ok: true });
 });
 
@@ -721,6 +759,16 @@ app.post("/api/ideas", async (c) => {
   await notSelf(c, targetId);
   const f = itemFields(b);
   if (!f.title) fail(400, "Give it a name.");
+  const wishes = await all<{ title: string; url: string }>(
+    c.env.DB,
+    "SELECT title, url FROM items WHERE owner_id = ? AND occasion = ? AND deleted_at IS NULL",
+    targetId,
+    c.env.OCCASION,
+  );
+  if (wishes.some((w) => sameThing(w, f))) {
+    const target = await first<{ name: string }>(c.env.DB, "SELECT name FROM people WHERE id = ?", targetId);
+    fail(409, `That's already on ${target?.name}'s own list. You can claim it there.`);
+  }
   const id = uid();
   await run(
     c.env.DB,
@@ -745,6 +793,16 @@ app.delete("/api/ideas/:id", async (c) => {
   const idea = await ideaFor(c, c.req.param("id"));
   if (idea.author_id !== c.get("me").id) fail(403, "Only the person who added this can remove it.");
   await run(c.env.DB, "DELETE FROM ideas WHERE id = ?", idea.id);
+  return c.json({ ok: true });
+});
+
+app.post("/api/ideas/:id/merge", async (c) => {
+  const idea = await ideaFor(c, c.req.param("id"));
+  const itemId = text((await body(c)).itemId, 64);
+  const item = await first(c.env.DB, "SELECT 1 FROM items WHERE id = ? AND owner_id = ? AND deleted_at IS NULL", itemId, idea.target_id);
+  if (!item) fail(404, "That item isn't on their list anymore.");
+  const row = await first<IdeaRow>(c.env.DB, "SELECT id, author_id, claimer_id, status, title, url FROM ideas WHERE id = ?", idea.id);
+  await mergeIdea(c.env, row!, itemId);
   return c.json({ ok: true });
 });
 

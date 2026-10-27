@@ -112,6 +112,7 @@ export type Item = {
   priority: number;
   qty: number;
   deleted_at?: number | null;
+  suggested_by_name?: string | null;
   claims?: Claim[];
   group?: Group | null;
 };
@@ -128,6 +129,8 @@ export type Idea = {
   claimer_id: string | null;
   claimer_name: string | null;
   status: "reserved" | "bought" | null;
+  similar_item_id: string | null;
+  similar_item_title: string | null;
 };
 
 export type Question = { id: string; item_id: string | null; question: string; answer: string | null; mine: boolean };

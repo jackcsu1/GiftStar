@@ -384,6 +384,7 @@ function TheirList({ view, meId, reload }: { view: PersonView; meId: string; rel
                 </>
               }
             >
+              {item.suggested_by_name && <span className="chip author">💡 {item.suggested_by_name} suggested this too</span>}
               {claims.length > 0 && (
                 <div className="row" style={{ gap: 6 }}>
                   {claims.map((c) => (
@@ -500,6 +501,25 @@ function TheirList({ view, meId, reload }: { view: PersonView; meId: string; rel
                 </span>
               )}
             </div>
+            {idea.similar_item_id && (
+              <div className="card soft stack" style={{ padding: 10, gap: 6 }}>
+                <span className="small">
+                  {first}'s own list has something similar: <strong>“{idea.similar_item_title}”</strong>
+                </span>
+                <button
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      await api("POST", `/ideas/${idea.id}/merge`, { itemId: idea.similar_item_id });
+                      reload();
+                    }, "Merged into their wish. Any claim moved over.")
+                  }
+                >
+                  Same thing, merge
+                </button>
+              </div>
+            )}
           </ItemCard>
         ))}
       </div>
