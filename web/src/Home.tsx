@@ -5,8 +5,8 @@ import { Avatar, Loading, useToast } from "./ui";
 import { go } from "./router";
 
 type HomeData = {
-  me: { id: string; name: string; is_kid: number };
-  people: PersonSummary[];
+  me: { id: string; name: string; is_kid: number; in_drawing: number };
+  people: (PersonSummary & { ideas: number; signed_in: number })[];
   assignment: { id: string; name: string } | null;
   removed: { id: string; title: string; owner_id: string; owner_name: string }[];
   unanswered: number;
@@ -32,7 +32,7 @@ export function Home() {
     <div className="stack-lg">
       <h1 style={{ paddingTop: 20 }}>Merry Christmas, {me.name.replace(/^(Grandpa|Grandma)\s+/, "")}!</h1>
 
-      {!me.is_kid && (
+      {!!me.in_drawing && (
         <div className="card highlight stack">
           {data.assignment ? (
             <>
@@ -49,7 +49,7 @@ export function Home() {
             </>
           ) : (
             <p>
-              <strong>Who you're buying for</strong> will show up here once the grown-up names are drawn.
+              <strong>Cathy drawing names soon - stay tuned!</strong>
             </p>
           )}
         </div>
@@ -95,7 +95,7 @@ export function Home() {
                 <button key={p.id} className="person" onClick={() => go(`/p/${p.id}`)}>
                   <Avatar id={p.id} name={p.name} />
                   <strong>{p.name}</strong>
-                  <span className="small muted">{p.items ? `${p.items} wish${p.items === 1 ? "" : "es"}` : "No list yet"}</span>
+                  <span className="small muted">{listStatus(p)}</span>
                 </button>
               ))}
             </div>
@@ -128,6 +128,14 @@ export function Home() {
       )}
     </div>
   );
+}
+
+function listStatus(p: { items?: number; ideas: number; signed_in: number }) {
+  const parts = [];
+  if (p.items) parts.push(`${p.items} wish${p.items === 1 ? "" : "es"}`);
+  if (p.ideas) parts.push(`${p.ideas} idea${p.ideas === 1 ? "" : "s"}`);
+  if (parts.length) return parts.join(" · ");
+  return p.signed_in ? "No list yet" : "Yet to sign in";
 }
 
 function groupBy<T>(list: T[], key: (t: T) => string) {

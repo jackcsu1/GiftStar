@@ -64,6 +64,16 @@ jobs:
             rm roster.sql
           fi
 
+      - name: Apply family settings
+        env:
+          FAMILY_CONFIG: ${{ secrets.FAMILY_CONFIG }}
+        run: |
+          if [ -n "$FAMILY_CONFIG" ]; then
+            printf '%s' "$FAMILY_CONFIG" > family.sql
+            npx wrangler d1 execute giftstar --remote --file family.sql
+            rm family.sql
+          fi
+
       - name: Deploy worker
         id: deploy
         run: |

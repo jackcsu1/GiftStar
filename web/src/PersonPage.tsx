@@ -493,7 +493,7 @@ function TheirList({ view, meId, reload }: { view: PersonView; meId: string; rel
             }
           >
             <div className="row" style={{ gap: 6 }}>
-              <span className="chip">Idea from {idea.author_id === meId ? "you" : idea.author_name}</span>
+              <span className="chip author">💡 Added by {idea.author_id === meId ? "you" : idea.author_name}</span>
               {idea.claimer_id && (
                 <span className={`chip ${idea.status}`}>
                   {idea.status === "bought" ? "Bought" : "Reserved"} by {idea.claimer_id === meId ? "you" : idea.claimer_name}

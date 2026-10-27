@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, session, type PersonSummary } from "./api";
-import { StarLogo, useAction } from "./ui";
+import { AppIcon, useAction } from "./ui";
 
 export function groupByHousehold<T extends PersonSummary>(people: T[]) {
   const groups = new Map<string, T[]>();
@@ -42,9 +42,7 @@ export function Join({ onJoined }: { onJoined: (personId: string) => void }) {
   return (
     <div className="wrap stack-lg" style={{ paddingTop: 40 }}>
       <div className="center stack" style={{ alignItems: "center" }}>
-        <div style={{ width: 72, height: 72, background: "var(--brand)", borderRadius: 20, padding: 10 }}>
-          <StarLogo />
-        </div>
+        <AppIcon />
         <h1>GiftStar</h1>
         <p className="muted">Our family's Christmas 2026 wish lists</p>
       </div>
@@ -65,7 +63,7 @@ export function Join({ onJoined }: { onJoined: (personId: string) => void }) {
             Continue
           </button>
           <button type="button" className="btn ghost" onClick={() => setStep("code")}>
-            I have a code from the admin
+            I have a code from Matt
           </button>
         </form>
       )}
@@ -77,7 +75,7 @@ export function Join({ onJoined }: { onJoined: (personId: string) => void }) {
             <p className="muted">Tap your name. You only do this once on this device.</p>
           </div>
           {people.length === 0 && (
-            <div className="card soft">Everyone is already set up. If you need to get in on a new phone or tablet, ask the admin for a code.</div>
+            <div className="card soft">Everyone is already set up. If you need to get in on a new phone or tablet, ask Matt for a code.</div>
           )}
           {groupByHousehold(people).map(([household, members]) => (
             <div className="stack" key={household}>
@@ -118,7 +116,7 @@ export function Join({ onJoined }: { onJoined: (personId: string) => void }) {
             redeem();
           }}
         >
-          <p>If your name was already set up somewhere else, or you share this device, the admin can give you a 6-letter code.</p>
+          <p>If your name was already set up somewhere else, or you share this device, Matt can give you a 6-letter code.</p>
           <label>
             Code
             <input

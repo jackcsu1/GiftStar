@@ -3,7 +3,7 @@ import { api, session, ApiError } from "./api";
 import { Loading, Sheet, useAction, useToast } from "./ui";
 import { go } from "./router";
 
-type AdminPerson = { id: string; name: string; household: string; is_kid: number; devices: number; items: number };
+type AdminPerson = { id: string; name: string; household: string; is_kid: number; in_drawing: number; devices: number; items: number };
 type Data = { people: AdminPerson[]; assignments: { giver_id: string; recipient_id: string }[] };
 
 export function Admin() {
@@ -61,7 +61,7 @@ export function Admin() {
   }
   if (!data) return <Loading />;
 
-  const grownups = data.people.filter((p) => !p.is_kid);
+  const grownups = data.people.filter((p) => p.in_drawing);
   const receiving = Object.values(pairs).filter(Boolean);
   const doubled = grownups.filter((p) => receiving.filter((r) => r === p.id).length > 1);
   const left = grownups.filter((p) => !receiving.includes(p.id));
@@ -148,8 +148,8 @@ export function Admin() {
       </div>
 
       <div className="stack">
-        <h2>Who buys for whom (grown-ups)</h2>
-        <p className="small muted">Kids are left out. Everyone shops for them.</p>
+        <h2>Name drawing results</h2>
+        <p className="small muted">Only {grownups.map((p) => p.name).join(", ")} see this. Until it's saved, they see “Cathy drawing names soon - stay tuned!”</p>
         <div className="card stack">
           {grownups.map((g) => (
             <label key={g.id} className="row" style={{ flexDirection: "row", alignItems: "center" }}>
@@ -232,7 +232,7 @@ export function Admin() {
             {code.code}
           </p>
           <p>
-            Have {code.name} open GiftStar, tap <strong>“I have a code from the admin”</strong> (or <strong>“Add someone to this device”</strong> on a shared device), and enter
+            Have {code.name} open GiftStar, tap <strong>“I have a code from Matt”</strong> (or <strong>“Add someone to this device”</strong> on a shared device), and enter
             this code. It works once and expires in 7 days.
           </p>
         </Sheet>

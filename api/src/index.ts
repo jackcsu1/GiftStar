@@ -22,6 +22,7 @@ type Person = {
   favorites: string;
   dont_buy: string;
   about: string;
+  in_drawing: number;
 };
 
 type Vars = { me: Person; tokenHash: string };
@@ -105,6 +106,12 @@ const run = (db: D1Database, sql: string, ...args: unknown[]) => db.prepare(sql)
 
 const PUBLIC_PERSON = "id, name, household, is_kid, sort";
 
+// Some households don't see each other's lists. Bind the viewer's household twice.
+const HIDDEN_FROM = (alias: string) =>
+  `EXISTS (SELECT 1 FROM household_hidden h
+     WHERE (h.household_a = ? AND h.household_b = ${alias}.household)
+        OR (h.household_b = ? AND h.household_a = ${alias}.household))`;
+
 // ---------- Joining ----------
 
 app.post("/api/join", async (c) => {
@@ -125,7 +132,7 @@ app.post("/api/pick", async (c) => {
   const person = await first(c.env.DB, "SELECT id FROM people WHERE id = ?", personId);
   if (!person) fail(404, "We couldn't find that name.");
   const taken = await first(c.env.DB, "SELECT 1 FROM device_people WHERE person_id = ?", personId);
-  if (taken) fail(409, "That name is already set up on another device. Ask the GiftStar admin for a code.");
+  if (taken) fail(409, "That name is already set up on another device. Ask Matt for a code.");
   const token = randomToken();
   const hash = await sha256(token);
   await c.env.DB.batch([
@@ -180,7 +187,7 @@ const admin = async (c: C, next: Next) => {
 app.get("/api/admin/people", admin, async (c) => {
   const people = await all(
     c.env.DB,
-    `SELECT ${PUBLIC_PERSON},
+    `SELECT ${PUBLIC_PERSON}, in_drawing,
        (SELECT COUNT(*) FROM device_people dp WHERE dp.person_id = people.id) AS devices,
        (SELECT COUNT(*) FROM items i WHERE i.owner_id = people.id AND i.deleted_at IS NULL AND i.occasion = ?) AS items
      FROM people ORDER BY sort`,
@@ -237,9 +244,11 @@ app.post("/api/admin/reset", admin, async (c) => {
 app.put("/api/admin/assignments", admin, async (c) => {
   const pairs = (await body(c)).pairs;
   if (!Array.isArray(pairs)) fail(400, "Expected a list of pairs.");
+  const drawing = new Set((await all<{ id: string }>(c.env.DB, "SELECT id FROM people WHERE in_drawing = 1")).map((p) => p.id));
   const stmts = [c.env.DB.prepare("DELETE FROM assignments WHERE occasion = ?").bind(c.env.OCCASION)];
   for (const p of pairs as { giver_id?: string; recipient_id?: string }[]) {
     if (!p.giver_id || !p.recipient_id || p.giver_id === p.recipient_id) continue;
+    if (!drawing.has(p.giver_id) || !drawing.has(p.recipient_id)) continue;
     stmts.push(
       c.env.DB.prepare("INSERT INTO assignments (occasion, giver_id, recipient_id) VALUES (?, ?, ?)").bind(c.env.OCCASION, p.giver_id, p.recipient_id),
     );
@@ -290,16 +299,23 @@ app.get("/api/home", async (c) => {
     all(
       c.env.DB,
       `SELECT ${PUBLIC_PERSON},
-         (SELECT COUNT(*) FROM items i WHERE i.owner_id = people.id AND i.deleted_at IS NULL AND i.occasion = ?) AS items
-       FROM people ORDER BY sort`,
+         (SELECT COUNT(*) FROM items i WHERE i.owner_id = people.id AND i.deleted_at IS NULL AND i.occasion = ?) AS items,
+         (SELECT COUNT(*) FROM ideas d WHERE d.target_id = people.id AND d.occasion = ? AND people.id != ?) AS ideas,
+         EXISTS (SELECT 1 FROM device_people dp WHERE dp.person_id = people.id) AS signed_in
+       FROM people WHERE NOT ${HIDDEN_FROM("people")} ORDER BY sort`,
       occ,
+      occ,
+      me.id,
+      me.household,
+      me.household,
     ),
     first(
       c.env.DB,
       `SELECT p.id, p.name FROM assignments a JOIN people p ON p.id = a.recipient_id
-       WHERE a.occasion = ? AND a.giver_id = ?`,
+       WHERE a.occasion = ? AND a.giver_id = ? AND ? = 1`,
       occ,
       me.id,
+      me.in_drawing,
     ),
     all(
       c.env.DB,
@@ -333,7 +349,7 @@ app.get("/api/home", async (c) => {
     ),
   ]);
   return c.json({
-    me: { id: me.id, name: me.name, is_kid: me.is_kid },
+    me: { id: me.id, name: me.name, is_kid: me.is_kid, in_drawing: me.in_drawing },
     people,
     assignment,
     removed,
@@ -346,9 +362,8 @@ app.get("/api/home", async (c) => {
 app.get("/api/people/:id", async (c) => {
   const me = c.get("me");
   const occ = c.env.OCCASION;
-  const person = await first<Person>(c.env.DB, "SELECT * FROM people WHERE id = ?", c.req.param("id"));
-  if (!person) fail(404, "We couldn't find that person.");
-  const isMe = person!.id === me.id;
+  const person = await visiblePerson(c, c.req.param("id"));
+  const isMe = person.id === me.id;
 
   const items = await all<Record<string, unknown> & { id: string; deleted_at: number | null }>(
     c.env.DB,
@@ -420,6 +435,13 @@ app.get("/api/people/:id", async (c) => {
     ideas,
   });
 });
+
+async function visiblePerson(c: C, id: string) {
+  const me = c.get("me");
+  const person = await first<Person>(c.env.DB, `SELECT * FROM people WHERE id = ? AND NOT ${HIDDEN_FROM("people")}`, id, me.household, me.household);
+  if (!person) fail(404, "We couldn't find that person.");
+  return person!;
+}
 
 app.put("/api/profile", async (c) => {
   const b = await body(c);
@@ -511,6 +533,7 @@ async function othersItem(c: C, id: string) {
   );
   if (!item) fail(404, "That item was removed from the list.");
   if (item!.owner_id === c.get("me").id) fail(403, "That's on your own list.");
+  await visiblePerson(c, item!.owner_id);
   return item!;
 }
 
@@ -626,6 +649,7 @@ async function groupFor(c: C, id: string) {
   );
   if (!g) fail(404, "That group gift is gone.");
   if (g!.owner_id === c.get("me").id) fail(403, "That's for you!");
+  await visiblePerson(c, g!.owner_id);
   return g!;
 }
 
@@ -673,7 +697,7 @@ app.delete("/api/groups/:id/people/:pid", async (c) => {
 // ---------- Ideas for someone else ----------
 
 async function notSelf(c: C, targetId: string) {
-  if (!(await first(c.env.DB, "SELECT 1 FROM people WHERE id = ?", targetId))) fail(404, "We couldn't find that person.");
+  await visiblePerson(c, targetId);
   if (targetId === c.get("me").id) fail(403, "Add it to your own list instead.");
 }
 
@@ -684,6 +708,7 @@ async function ideaFor(c: C, id: string) {
     id,
   );
   if (!idea) fail(404, "That idea is gone.");
+  await visiblePerson(c, idea!.target_id);
   if (idea!.target_id === c.get("me").id) fail(403, "No peeking!");
   return idea!;
 }
@@ -785,8 +810,7 @@ app.post("/api/ai/ideas", async (c) => {
   if (!c.env.ANTHROPIC_API_KEY) fail(503, "Gift ideas aren't switched on yet.");
   const b = await body(c);
   const me = c.get("me");
-  const person = await first<Person>(c.env.DB, "SELECT * FROM people WHERE id = ?", text(b.targetId, 64));
-  if (!person) fail(404, "We couldn't find that person.");
+  const person = await visiblePerson(c, text(b.targetId, 64));
   const isMe = person!.id === me.id;
   const items = await all<{ title: string; notes: string; price: string }>(
     c.env.DB,

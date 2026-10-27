@@ -1,1 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#a3233a"/><path d="M32 10l6.5 13.6 14.9 2-10.9 10.3 2.7 14.8L32 43.6l-13.2 7.1 2.7-14.8L10.6 25.6l14.9-2z" fill="#f6c453"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fc2ec"/>
+      <stop offset="0.75" stop-color="#e3f0fb"/>
+      <stop offset="1" stop-color="#ffffff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="32" cy="17" r="15" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7da" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#fff7da" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="tile"><rect width="64" height="64" rx="14"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="64" height="64" fill="url(#sky)"/>
+    <circle cx="32" cy="17" r="15" fill="url(#glow)"/>
+    <!-- Star of Bethlehem: long ray pointing down to the stable -->
+    <path d="M32 3.5 L33.6 15.2 L44.5 17 L33.6 18.8 L32 36 L30.4 18.8 L19.5 17 L30.4 15.2 Z" fill="#e2a92c"/>
+    <path d="M32 11 L33.4 15.6 L38 17 L33.4 18.4 L32 23 L30.6 18.4 L26 17 L30.6 15.6 Z" fill="#ffe6a3" transform="rotate(45 32 17)"/>
+    <!-- Stable with open doorway, on a hill -->
+    <path fill="#1d3a5c" fill-rule="evenodd" d="M14.5 48 L32 38.5 L49.5 48 L46 48 L46 58 L18 58 L18 48 Z M27.5 58 L27.5 51.5 Q32 48.5 36.5 51.5 L36.5 58 Z"/>
+    <path fill="#1d3a5c" d="M0 59 Q32 53.5 64 59 L64 64 L0 64 Z"/>
+    <path fill="#e2a92c" opacity="0.9" d="M29 57.5 L35 57.5 L34 55 L30 55 Z"/>
+  </g>
+</svg>

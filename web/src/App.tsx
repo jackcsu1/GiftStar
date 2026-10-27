@@ -143,7 +143,7 @@ function AddToDevice({ onClose, onAdded }: { onClose: () => void; onAdded: (id: 
   const { busy, run } = useAction();
   return (
     <Sheet title="Add someone to this device" onClose={onClose}>
-      <p>For a shared phone or tablet. Ask the admin for that person's 6-letter code.</p>
+      <p>For a shared phone or tablet. Ask Matt for that person's 6-letter code.</p>
       <form
         className="stack"
         onSubmit={(e) => {

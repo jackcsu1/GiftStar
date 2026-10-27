@@ -4,12 +4,17 @@ import { imageSrc } from "./api";
 export function StarLogo() {
   return (
     <svg viewBox="0 0 64 64" aria-hidden="true">
-      <path d="M32 6l7.6 15.9 17.4 2.3-12.7 12 3.2 17.3L32 45.2l-15.5 8.3 3.2-17.3L7 24.2l17.4-2.3z" fill="#f6c453" />
+      <path d="M32 2 L35 27 L60 30 L35 33 L32 62 L29 33 L4 30 L29 27 Z" fill="var(--star)" />
+      <path d="M32 18 L34.5 27.5 L44 30 L34.5 32.5 L32 42 L29.5 32.5 L20 30 L29.5 27.5 Z" fill="#fff3c4" transform="rotate(45 32 30)" />
     </svg>
   );
 }
 
-const AVATAR_COLORS = ["#a3233a", "#1f5c48", "#b8641a", "#5a4a8a", "#2f6690", "#8a3b6b", "#6b7f2a"];
+export function AppIcon() {
+  return <img className="app-icon" src={`${import.meta.env.BASE_URL}star.svg`} alt="" />;
+}
+
+const AVATAR_COLORS = ["#2a669c", "#7a5a3a", "#b07d12", "#3d5a80", "#4f7f99", "#8a6a48", "#4d6a35"];
 
 export function Avatar({ name, id }: { name: string; id: string }) {
   const hash = [...id].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7);

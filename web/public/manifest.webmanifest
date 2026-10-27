@@ -4,8 +4,8 @@
   "start_url": "/GiftStar/",
   "scope": "/GiftStar/",
   "display": "standalone",
-  "background_color": "#fbf6ef",
-  "theme_color": "#a3233a",
+  "background_color": "#f3f8fd",
+  "theme_color": "#bcdcf4",
   "icons": [
     { "src": "/GiftStar/star.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/GiftStar/icon-512.png", "sizes": "512x512", "type": "image/png" },
