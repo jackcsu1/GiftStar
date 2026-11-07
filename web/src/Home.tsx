@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, type PersonSummary } from "./api";
+import { FamilyCodes } from "./FamilyCodes";
 import { groupByHousehold } from "./Join";
 import { Avatar, Loading, useToast } from "./ui";
 import { go } from "./router";
 
 type HomeData = {
-  me: { id: string; name: string; is_kid: number; in_drawing: number };
+  me: { id: string; name: string; is_kid: number; in_drawing: number; is_admin: number };
   people: (PersonSummary & { ideas: number; signed_in: number })[];
   assignment: { id: string; name: string } | null;
   removed: { id: string; title: string; owner_id: string; owner_name: string }[];
@@ -16,6 +17,7 @@ type HomeData = {
 
 export function Home() {
   const [data, setData] = useState<HomeData | null>(null);
+  const [codes, setCodes] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -126,6 +128,16 @@ export function Home() {
           </div>
         </div>
       )}
+
+      {!!data.me.is_admin && (
+        <div className="stack">
+          <h2>Family codes</h2>
+          <button className="btn block" onClick={() => setCodes(true)}>
+            Make a code for a family member
+          </button>
+        </div>
+      )}
+      {codes && <FamilyCodes onClose={() => setCodes(false)} />}
     </div>
   );
 }

@@ -24,6 +24,7 @@ type Person = {
   dont_buy: string;
   about: string;
   in_drawing: number;
+  is_admin: number;
 };
 
 type Vars = { me: Person; tokenHash: string };
@@ -230,13 +231,16 @@ app.patch("/api/admin/people/:id", admin, async (c) => {
   return c.json({ ok: true });
 });
 
-app.post("/api/admin/code", admin, async (c) => {
+// One-time code that signs a device in as this person.
+async function makeCode(c: C) {
   const personId = text((await body(c)).personId, 64);
   if (!(await first(c.env.DB, "SELECT 1 FROM people WHERE id = ?", personId))) fail(404, "Not found.");
   const code = inviteCode();
   await run(c.env.DB, "INSERT INTO invite_codes (code, person_id, created_at) VALUES (?, ?, ?)", code, personId, now());
   return c.json({ code });
-});
+}
+
+app.post("/api/admin/code", admin, makeCode);
 
 app.post("/api/admin/reset", admin, async (c) => {
   const personId = text((await body(c)).personId, 64);
@@ -284,9 +288,30 @@ const authed = async (c: C, next: Next) => {
   await next();
 };
 
-for (const path of ["/api/me", "/api/home", "/api/people/*", "/api/profile", "/api/items", "/api/items/*", "/api/ideas", "/api/ideas/*", "/api/questions", "/api/questions/*", "/api/groups/*", "/api/unfurl", "/api/upload", "/api/ai/*"]) {
+for (const path of ["/api/me", "/api/home", "/api/people/*", "/api/profile", "/api/items", "/api/items/*", "/api/ideas", "/api/ideas/*", "/api/questions", "/api/questions/*", "/api/groups/*", "/api/unfurl", "/api/upload", "/api/ai/*", "/api/family", "/api/family/*"]) {
   app.use(path, authed);
 }
+
+// The family admin can hand out codes from the regular screen.
+const familyAdmin = async (c: C, next: Next) => {
+  if (!c.get("me").is_admin) fail(403, "Only Matt can make family codes.");
+  await next();
+};
+for (const path of ["/api/family", "/api/family/*"]) {
+  app.use(path, familyAdmin);
+}
+
+app.get("/api/family", async (c) => {
+  const people = await all(
+    c.env.DB,
+    `SELECT ${PUBLIC_PERSON},
+       (SELECT COUNT(*) FROM device_people dp WHERE dp.person_id = people.id) AS devices
+     FROM people ORDER BY sort`,
+  );
+  return c.json({ people });
+});
+
+app.post("/api/family/code", makeCode);
 
 app.get("/api/me", async (c) => {
   const people = await all(
@@ -354,7 +379,7 @@ app.get("/api/home", async (c) => {
     ),
   ]);
   return c.json({
-    me: { id: me.id, name: me.name, is_kid: me.is_kid, in_drawing: me.in_drawing },
+    me: { id: me.id, name: me.name, is_kid: me.is_kid, in_drawing: me.in_drawing, is_admin: me.is_admin },
     people,
     assignment,
     removed,
