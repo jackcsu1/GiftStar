@@ -1,3 +1,4 @@
+import { amazonSearchUrl } from "./links";
 import { useState } from "react";
 import { api } from "./api";
 import { Sheet, Spinner, useAction } from "./ui";
@@ -59,7 +60,9 @@ export function AiIdeas({
             <span className="small muted">{idea.price}</span>
           </div>
           <p className="small">{idea.why}</p>
-          <p className="small muted">Search for: “{idea.search}”</p>
+          <a className="btn small" href={amazonSearchUrl(idea.search || idea.title)} target="_blank" rel="noopener noreferrer">
+            🔍 Find it on Amazon
+          </a>
           <button
             className="btn small"
             disabled={added.includes(idea.title)}

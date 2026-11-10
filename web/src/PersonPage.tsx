@@ -4,6 +4,7 @@ import { ItemForm, type ItemFields } from "./ItemForm";
 import { AiIdeas } from "./AiIdeas";
 import { Avatar, Loading, PRIORITY, Sheet, Thumb, cents, hostOf, money, useAction, useToast } from "./ui";
 import { go } from "./router";
+import { amazonSearchUrl } from "./links";
 
 export function PersonPage({ id, meId }: { id: string; meId: string }) {
   const [view, setView] = useState<PersonView | null>(null);
@@ -35,9 +36,13 @@ function ItemCard({ item, children, footer }: { item: Item | Idea; children?: Re
           {"qty" in item && item.qty > 1 && <span className="chip">Wants {item.qty}</span>}
         </div>
         {item.notes && <p className="small" style={{ whiteSpace: "pre-wrap" }}>{item.notes}</p>}
-        {item.url && (
+        {item.url ? (
           <a className="small" href={item.url} target="_blank" rel="noopener noreferrer">
             View at {hostOf(item.url) || "store"} ↗
+          </a>
+        ) : (
+          <a className="small" href={amazonSearchUrl(item.title)} target="_blank" rel="noopener noreferrer">
+            🔍 Find it on Amazon ↗
           </a>
         )}
         {children}

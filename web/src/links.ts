@@ -51,3 +51,8 @@ function cleanTitle(s: string): string {
     .trim();
   return /[a-z]{3}/i.test(t) ? t.slice(0, 300) : "";
 }
+
+// A normal Amazon search page for a gift idea. Opens Amazon itself; nothing is scraped.
+export function amazonSearchUrl(query: string): string {
+  return `https://www.amazon.com/s?k=${encodeURIComponent(query.replace(/\s+/g, " ").trim().slice(0, 150))}`;
+}

@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, blobToDataUrl, imageSrc, shrinkImage } from "./api";
-import { parseShared, storeName } from "./links";
+import { amazonSearchUrl, parseShared, storeName } from "./links";
 import { Spinner, useAction } from "./ui";
 
 export type ItemFields = { title: string; url: string; image: string; price: string; notes: string; priority: number; qty: number };
@@ -21,8 +21,22 @@ export function ItemForm({
   onSave: (f: ItemFields) => Promise<unknown>;
   onCancel: () => void;
 }) {
-  const [f, setF] = useState<ItemFields>({ ...EMPTY, ...initial });
-  const [photos, setPhotos] = useState<string[]>(initial?.image ? [initial.image] : []);
+  const isNew = !initial?.title;
+  // Keep what someone typed for a new item, in case they leave the app to look at a store and come back.
+  const draftKey = `giftstar:draft:${kind}`;
+  const [start] = useState<{ fields: ItemFields; restored: boolean }>(() => {
+    if (isNew) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(draftKey) || "null");
+        if (saved && (saved.title || saved.url)) return { fields: { ...EMPTY, ...initial, ...saved }, restored: true };
+      } catch {
+        // ignore: just start fresh
+      }
+    }
+    return { fields: { ...EMPTY, ...initial }, restored: false };
+  });
+  const [f, setF] = useState<ItemFields>(start.fields);
+  const [photos, setPhotos] = useState<string[]>(start.fields.image ? [start.fields.image] : []);
   const [fetching, setFetching] = useState(false);
   const [note, setNote] = useState("");
   const [lookup, setLookup] = useState<Lookup>("idle");
@@ -33,7 +47,24 @@ export function ItemForm({
   const photoInput = useRef<HTMLInputElement>(null);
   const snapInput = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<ItemFields>) => setF((prev) => ({ ...prev, ...patch }));
-  const isNew = !initial?.title;
+
+  useEffect(() => {
+    if (!isNew) return;
+    try {
+      if (f.title.trim() || f.url.trim()) localStorage.setItem(draftKey, JSON.stringify(f));
+      else localStorage.removeItem(draftKey);
+    } catch {
+      // storage can be off in private browsing; the form still works
+    }
+  }, [f, isNew, draftKey]);
+
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // ignore
+    }
+  };
 
   async function fetchDetails(raw: string) {
     const url = raw.trim();
@@ -110,9 +141,17 @@ export function ItemForm({
       className="stack"
       onSubmit={(e) => {
         e.preventDefault();
-        if (f.title.trim()) run(() => onSave(f));
+        if (f.title.trim())
+          run(async () => {
+            await onSave(f);
+            clearDraft();
+          });
       }}
     >
+      {start.restored && (
+        <div className="card soft small">We kept what you typed last time. You can keep going, or tap Cancel to start over.</div>
+      )}
+
       {isNew && (
         <>
           <button type="button" className="btn block" onClick={() => snapInput.current?.click()} disabled={busy}>
@@ -196,6 +235,17 @@ export function ItemForm({
         <input ref={titleInput} value={f.title} onChange={(e) => set({ title: e.target.value })} required maxLength={300} />
       </label>
 
+      {isNew && f.title.trim().length >= 2 && (
+        <div className="stack" style={{ gap: 6 }}>
+          <a className="btn block" href={amazonSearchUrl(f.title)} target="_blank" rel="noopener noreferrer">
+            🔍 Find it on Amazon
+          </a>
+          <p className="small muted">
+            Amazon opens on its own. When you find it, tap <strong>Share</strong>, then <strong>Copy</strong>. Come back here and paste it in the Store link box above.
+          </p>
+        </div>
+      )}
+
       <div className="stack" style={{ gap: 6 }}>
         <strong style={{ fontSize: 16 }}>Photo</strong>
         <div className="photos">
@@ -248,7 +298,14 @@ export function ItemForm({
         <button className="btn primary" style={{ flex: 1 }} disabled={busy || !f.title.trim()}>
           Save it
         </button>
-        <button type="button" className="btn" onClick={onCancel}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            clearDraft();
+            onCancel();
+          }}
+        >
           Cancel
         </button>
       </div>
