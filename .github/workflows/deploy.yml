@@ -86,9 +86,10 @@ jobs:
           FAMILY_PASSCODE: ${{ secrets.FAMILY_PASSCODE }}
           ADMIN_PASSCODE: ${{ secrets.ADMIN_PASSCODE }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT_TOKEN: ${{ secrets.AGENT_TOKEN }}
         run: |
-          jq -n --arg f "$FAMILY_PASSCODE" --arg a "$ADMIN_PASSCODE" --arg k "$ANTHROPIC_API_KEY" \
-            '{FAMILY_PASSCODE:$f, ADMIN_PASSCODE:$a, ANTHROPIC_API_KEY:$k} | with_entries(select(.value != ""))' > secrets.json
+          jq -n --arg f "$FAMILY_PASSCODE" --arg a "$ADMIN_PASSCODE" --arg k "$ANTHROPIC_API_KEY" --arg g "$AGENT_TOKEN" \
+            '{FAMILY_PASSCODE:$f, ADMIN_PASSCODE:$a, ANTHROPIC_API_KEY:$k, AGENT_TOKEN:$g} | with_entries(select(.value != ""))' > secrets.json
           npx wrangler secret bulk secrets.json
           rm secrets.json
 

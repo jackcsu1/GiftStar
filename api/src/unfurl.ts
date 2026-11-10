@@ -10,7 +10,7 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 
 export async function unfurl(url: string): Promise<Unfurled> {
-  const out: Unfurled = { url: cleanUrl(url), title: "", image: "", price: "", images: [], found: false };
+  let finalUrl = url;
   let html = "";
   try {
     const res = await fetch(url, {
@@ -22,13 +22,20 @@ export async function unfurl(url: string): Promise<Unfurled> {
       redirect: "follow",
       signal: AbortSignal.timeout(10000),
     });
-    out.url = cleanUrl(res.url || url);
+    finalUrl = res.url || url;
     if (res.ok && (res.headers.get("Content-Type") || "").includes("html")) {
       html = (await res.text()).slice(0, 2_000_000);
     }
   } catch {
     // fall through to whatever we can learn from the URL itself
   }
+  return parseProductHtml(html, finalUrl);
+}
+
+// Turns a store page's HTML into product details. Also used for pages the family
+// computer opened in a real browser (see /api/agent/result).
+export function parseProductHtml(html: string, url: string): Unfurled {
+  const out: Unfurled = { url: cleanUrl(url), title: "", image: "", price: "", images: [], found: false };
 
   if (html && !looksBlocked(html)) {
     const product = jsonLdProduct(html);
@@ -59,15 +66,37 @@ export async function unfurl(url: string): Promise<Unfurled> {
     out.price =
       product.price ||
       formatPrice(meta("product:price:amount") || meta("og:price:amount"), meta("product:price:currency") || meta("og:price:currency")) ||
+      match(html, /priceToPay[\s\S]{0,600}?class="a-offscreen">\s*(\$[\d,]+\.?\d*)\s*</) ||
       match(html, /class="a-offscreen">\s*(\$[\d,]+\.?\d*)\s*</);
     out.found = !!(clean(out.title) || out.image);
-  } else {
-    out.title = "";
   }
 
   if (!out.title) out.title = titleFromUrl(out.url);
   out.title = clean(out.title).slice(0, 300);
   return out;
+}
+
+// Links the family computer is allowed to open. Everything else is refused,
+// so nobody can use GiftStar to make that computer visit other sites.
+const AMAZON_HOST =
+  /^(www\.)?amazon\.(com|ca|co\.uk|de|fr|it|es|nl|se|pl|com\.au|co\.jp|in|com\.mx|com\.br|sg|ae|sa)$/i;
+
+export function isAmazonPage(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && AMAZON_HOST.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isAgentUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return isAmazonPage(raw) || (u.protocol === "https:" && /^(a\.co|amzn\.to|amzn\.com)$/i.test(u.hostname));
+  } catch {
+    return false;
+  }
 }
 
 function jsonLdProduct(html: string) {

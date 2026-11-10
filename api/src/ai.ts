@@ -104,3 +104,48 @@ export async function identifyPhoto(apiKey: string, mediaType: "image/jpeg", dat
       "If you can't tell the exact model, describe it plainly.",
   );
 }
+
+const SHOT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["is_product_page", "title", "price", "notes", "store", "photo_found", "left", "top", "right", "bottom"],
+  properties: {
+    is_product_page: { type: "boolean", description: "True only if this is a screenshot of one product in a store or app" },
+    title: { type: "string", description: "Product name as the page shows it. Shorten very long titles to brand, product and key details" },
+    price: { type: "string", description: "The current price shown for this product, like $24.99. Empty if no price is visible" },
+    notes: { type: "string", description: "Selected color, size or variant if shown. Empty if none" },
+    store: { type: "string", description: "Store name if visible, such as Amazon or Target. Empty if unknown" },
+    photo_found: { type: "boolean", description: "True if the main product photo is clearly visible" },
+    left: { type: "number", description: "Left edge of the main product photo, 0 to 1, as a fraction of the image width" },
+    top: { type: "number", description: "Top edge of the main product photo, 0 to 1, as a fraction of the image height" },
+    right: { type: "number", description: "Right edge of the main product photo, 0 to 1" },
+    bottom: { type: "number", description: "Bottom edge of the main product photo, 0 to 1" },
+  },
+};
+
+export type Screenshot = {
+  is_product_page: boolean;
+  title: string;
+  price: string;
+  notes: string;
+  store: string;
+  photo_found: boolean;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+export async function identifyScreenshot(apiKey: string, mediaType: "image/jpeg", data: string): Promise<Screenshot> {
+  return ask(
+    apiKey,
+    [
+      { type: "image", source: { type: "base64", media_type: mediaType, data } },
+      { type: "text", text: "Someone took this screenshot of a product in a store page or app because they want it as a gift. Read it." },
+    ],
+    SHOT_SCHEMA,
+    "You read screenshots of store product pages for a family wish-list app. Copy the product name, current price, and selected color or size " +
+      "exactly as shown. Never guess a price or invent details that are not visible. For the photo box, outline only the large main product picture: " +
+      "not small thumbnails, ads, banners, or other products. Measure the box from the top-left corner of the whole image.",
+  );
+}

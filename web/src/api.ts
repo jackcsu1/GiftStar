@@ -87,6 +87,21 @@ export async function shrinkImage(file: Blob, max = 1200, quality = 0.85): Promi
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't read that photo."))), "image/jpeg", quality));
 }
 
+// Cut a box out of a picture. The box is given as fractions (0 to 1) of the picture's width and height.
+export async function cropImage(file: Blob, box: { left: number; top: number; right: number; bottom: number }, max = 1000, quality = 0.85): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const sx = Math.round(box.left * bitmap.width);
+  const sy = Math.round(box.top * bitmap.height);
+  const sw = Math.max(1, Math.round((box.right - box.left) * bitmap.width));
+  const sh = Math.max(1, Math.round((box.bottom - box.top) * bitmap.height));
+  const scale = Math.min(1, max / Math.max(sw, sh));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(sw * scale);
+  canvas.height = Math.round(sh * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't read that picture."))), "image/jpeg", quality));
+}
+
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

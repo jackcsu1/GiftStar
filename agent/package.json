@@ -1,0 +1,8 @@
+{
+  "name": "giftstar-agent",
+  "private": true,
+  "type": "module",
+  "description": "Opens Amazon pages for GiftStar in a normal browser on a home computer.",
+  "scripts": { "start": "node agent.mjs" },
+  "dependencies": { "playwright-core": "^1.49.0" }
+}

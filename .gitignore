@@ -5,3 +5,5 @@ dist/
 .DS_Store
 api/seed.sql
 api/family-config.sql
+agent/.env
+agent/node_modules/

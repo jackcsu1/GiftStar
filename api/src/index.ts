@@ -1,7 +1,7 @@
 import { Hono, type Context, type Next } from "hono";
 import { cors } from "hono/cors";
-import { unfurl } from "./unfurl";
-import { suggestIdeas, identifyPhoto } from "./ai";
+import { unfurl, parseProductHtml, isAgentUrl, isAmazonPage, type Unfurled } from "./unfurl";
+import { suggestIdeas, identifyPhoto, identifyScreenshot } from "./ai";
 import { sameThing, similarThing } from "./dupes";
 
 export type Env = {
@@ -11,6 +11,7 @@ export type Env = {
   FAMILY_PASSCODE: string;
   ADMIN_PASSCODE: string;
   ANTHROPIC_API_KEY?: string;
+  AGENT_TOKEN?: string;
 };
 
 type Person = {
@@ -288,7 +289,7 @@ const authed = async (c: C, next: Next) => {
   await next();
 };
 
-for (const path of ["/api/me", "/api/home", "/api/people/*", "/api/profile", "/api/items", "/api/items/*", "/api/ideas", "/api/ideas/*", "/api/questions", "/api/questions/*", "/api/groups/*", "/api/unfurl", "/api/upload", "/api/ai/*", "/api/family", "/api/family/*"]) {
+for (const path of ["/api/me", "/api/home", "/api/people/*", "/api/profile", "/api/items", "/api/items/*", "/api/ideas", "/api/ideas/*", "/api/questions", "/api/questions/*", "/api/groups/*", "/api/unfurl", "/api/unfurl/*", "/api/upload", "/api/ai/*", "/api/family", "/api/family/*"]) {
   app.use(path, authed);
 }
 
@@ -529,10 +530,98 @@ app.post("/api/upload", async (c) => {
   return c.json({ image: await storeImage(c.env, data, type) });
 });
 
+const CACHE_DAYS = 7;
+const AGENT_ONLINE_MS = 90_000;
+const JOB_WAIT_MS = 120_000;
+
+async function agentOnline(db: D1Database) {
+  const row = await first<{ seen_at: number }>(db, "SELECT seen_at FROM agent_seen WHERE id = 1");
+  return !!row && now() - row.seen_at < AGENT_ONLINE_MS;
+}
+
 app.post("/api/unfurl", async (c) => {
   const url = text((await body(c)).url, 2000);
   if (!/^https?:\/\//i.test(url)) fail(400, "That doesn't look like a web link.");
-  return c.json(await unfurl(url));
+  const out = await unfurl(url);
+  // Amazon blocks servers. If the family computer is on, let it look at the page in a real browser.
+  if (out.found || !c.env.AGENT_TOKEN || !isAgentUrl(out.url)) return c.json(out);
+  const cached = await first<{ result: string }>(
+    c.env.DB,
+    "SELECT result FROM lookup_cache WHERE key = ? AND created_at > ?",
+    out.url,
+    now() - CACHE_DAYS * 86400_000,
+  );
+  if (cached) return c.json(JSON.parse(cached.result) as Unfurled);
+  if (!(await agentOnline(c.env.DB))) return c.json(out);
+  const jobId = uid();
+  await run(c.env.DB, "INSERT INTO lookup_jobs (id, url, created_at, updated_at) VALUES (?, ?, ?, ?)", jobId, out.url, now(), now());
+  return c.json({ ...out, jobId });
+});
+
+app.get("/api/unfurl/job/:id", async (c) => {
+  const job = await first<{ status: string; result: string | null; created_at: number }>(
+    c.env.DB,
+    "SELECT status, result, created_at FROM lookup_jobs WHERE id = ?",
+    c.req.param("id"),
+  );
+  if (!job) fail(404, "Not found.");
+  const waiting = job!.status === "pending" || job!.status === "running";
+  if (waiting && now() - job!.created_at > JOB_WAIT_MS) return c.json({ status: "failed" });
+  return c.json({ status: job!.status, result: job!.result ? (JSON.parse(job!.result) as Unfurled) : undefined });
+});
+
+// ---------- Family computer (agent/) ----------
+// A small program on a home computer asks for pending Amazon lookups, opens each
+// page in a normal browser, and sends back the page. Only the token holder can call these.
+
+const agentOnly = async (c: C, next: Next) => {
+  if (!sameSecret(c.req.header("X-Agent-Token"), c.env.AGENT_TOKEN)) fail(403, "Not allowed.");
+  await next();
+};
+app.use("/api/agent/*", agentOnly);
+
+app.post("/api/agent/claim", async (c) => {
+  const t = now();
+  const seen = await first<{ seen_at: number }>(c.env.DB, "SELECT seen_at FROM agent_seen WHERE id = 1");
+  if (!seen || t - seen.seen_at > 20_000) {
+    await run(c.env.DB, "INSERT INTO agent_seen (id, seen_at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET seen_at = excluded.seen_at", t);
+    await run(c.env.DB, "DELETE FROM lookup_jobs WHERE created_at < ?", t - 86400_000);
+  }
+  const job = await first<{ id: string; url: string }>(
+    c.env.DB,
+    `UPDATE lookup_jobs SET status = 'running', updated_at = ?
+     WHERE id = (SELECT id FROM lookup_jobs WHERE status = 'pending' AND created_at > ? ORDER BY created_at LIMIT 1)
+     RETURNING id, url`,
+    t,
+    t - JOB_WAIT_MS,
+  );
+  return c.json(job ?? {});
+});
+
+app.post("/api/agent/result", async (c) => {
+  const b = await body(c);
+  const id = text(b.id, 64);
+  const job = await first<{ url: string }>(c.env.DB, "SELECT url FROM lookup_jobs WHERE id = ? AND status = 'running'", id);
+  if (!job) fail(404, "No such job.");
+  const finalUrl = text(b.finalUrl, 2000);
+  const html = typeof b.html === "string" ? b.html.slice(0, 2_000_000) : "";
+  // Only trust a page that really is an Amazon page.
+  const result: Unfurled = html && isAmazonPage(finalUrl) ? parseProductHtml(html, finalUrl) : { url: job!.url, title: "", image: "", price: "", images: [], found: false };
+  const json = JSON.stringify(result);
+  const statements = [
+    c.env.DB.prepare("UPDATE lookup_jobs SET status = ?, result = ?, updated_at = ? WHERE id = ?").bind(result.found ? "done" : "failed", json, now(), id),
+  ];
+  if (result.found) {
+    for (const key of new Set([job!.url, result.url])) {
+      statements.push(
+        c.env.DB.prepare(
+          "INSERT INTO lookup_cache (key, result, created_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET result = excluded.result, created_at = excluded.created_at",
+        ).bind(key, json, now()),
+      );
+    }
+  }
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, found: result.found });
 });
 
 // ---------- Items ----------
@@ -928,6 +1017,15 @@ app.post("/api/ai/snap", async (c) => {
   const m = image.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/);
   if (!m) fail(400, "Please choose a photo.");
   return c.json(await identifyPhoto(c.env.ANTHROPIC_API_KEY!, m![1] as "image/jpeg", m![2]));
+});
+
+app.post("/api/ai/screenshot", async (c) => {
+  if (!c.env.ANTHROPIC_API_KEY) fail(503, "Screenshot add isn't switched on yet.");
+  const b = await body(c);
+  const image = text(b.image, 12_000_000);
+  const m = image.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,(.+)$/);
+  if (!m) fail(400, "Please choose a screenshot.");
+  return c.json(await identifyScreenshot(c.env.ANTHROPIC_API_KEY!, m![1] as "image/jpeg", m![2]));
 });
 
 export default app;

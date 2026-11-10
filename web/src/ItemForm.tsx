@@ -1,12 +1,45 @@
 import { useEffect, useRef, useState } from "react";
-import { api, blobToDataUrl, imageSrc, shrinkImage } from "./api";
+import { api, blobToDataUrl, cropImage, imageSrc, shrinkImage } from "./api";
 import { amazonSearchUrl, parseShared, storeName } from "./links";
 import { Spinner, useAction } from "./ui";
 
 export type ItemFields = { title: string; url: string; image: string; price: string; notes: string; priority: number; qty: number };
 
-type Unfurl = { url: string; title: string; image: string; price: string; images: string[]; found: boolean };
-type Lookup = "idle" | "good" | "nophoto" | "guessed" | "failed" | "nolink";
+type Unfurl = { url: string; title: string; image: string; price: string; images: string[]; found: boolean; jobId?: string };
+type Shot = {
+  is_product_page: boolean;
+  title: string;
+  price: string;
+  notes: string;
+  store: string;
+  photo_found: boolean;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+// Amazon pages can be opened by the family computer. Wait a little for its answer.
+async function waitForJob(id: string): Promise<Unfurl | null> {
+  for (let i = 0; i < 18; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const j = await api<{ status: string; result?: Unfurl }>("GET", `/unfurl/job/${id}`);
+      if (j.status === "done" && j.result) return j.result;
+      if (j.status === "failed") return j.result ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function usableBox(s: Shot) {
+  const { left, top, right, bottom } = s;
+  const ok = [left, top, right, bottom].every(Number.isFinite) && left >= 0 && top >= 0 && right - left >= 0.15 && bottom - top >= 0.08 && left < 1 && top < 1;
+  return ok ? { left, top, right: Math.min(1, right), bottom: Math.min(1, bottom) } : null;
+}
+type Lookup = "idle" | "good" | "nophoto" | "guessed" | "failed" | "nolink" | "noshot";
 
 const EMPTY: ItemFields = { title: "", url: "", image: "", price: "", notes: "", priority: 2, qty: 1 };
 
@@ -41,6 +74,8 @@ export function ItemForm({
   const [note, setNote] = useState("");
   const [lookup, setLookup] = useState<Lookup>("idle");
   const [store, setStore] = useState("");
+  const [slow, setSlow] = useState(false);
+  const shotInput = useRef<HTMLInputElement>(null);
   const looked = useRef(new Set<string>());
   const titleInput = useRef<HTMLInputElement>(null);
   const { busy, run } = useAction();
@@ -73,8 +108,14 @@ export function ItemForm({
     setFetching(true);
     setNote("");
     setLookup("idle");
+    setSlow(false);
     try {
-      const d = await api<Unfurl>("POST", "/unfurl", { url });
+      let d = await api<Unfurl>("POST", "/unfurl", { url });
+      if (!d.found && d.jobId) {
+        setSlow(true);
+        const r = await waitForJob(d.jobId);
+        if (r) d = { ...r, url: r.url || d.url };
+      }
       const shown = d.url || url;
       looked.current.add(shown);
       setStore(storeName(shown) || storeName(url));
@@ -92,8 +133,40 @@ export function ItemForm({
       setLookup("failed");
     } finally {
       setFetching(false);
+      setSlow(false);
     }
   }
+
+  // Read a screenshot of a store page: name, price and the product picture.
+  const readScreenshot = (file: File) =>
+    run(async () => {
+      setNote("");
+      const small = await shrinkImage(file, 1600, 0.8);
+      const ai = await api<Shot>("POST", "/ai/screenshot", { image: await blobToDataUrl(small) });
+      if (!ai.is_product_page || !ai.title) {
+        setLookup("noshot");
+        return;
+      }
+      let image = "";
+      const box = ai.photo_found ? usableBox(ai) : null;
+      if (box) {
+        try {
+          const up = await api<{ image: string }>("POST", "/upload", undefined, { raw: await cropImage(file, box) });
+          image = up.image;
+        } catch {
+          // no picture is fine; the name and price still help
+        }
+      }
+      if (image) setPhotos((prev) => [image, ...prev]);
+      setF((prev) => ({
+        ...prev,
+        title: prev.title || ai.title,
+        price: prev.price || ai.price,
+        notes: prev.notes || ai.notes,
+        image: prev.image || image,
+      }));
+      setLookup(image ? "good" : "nophoto");
+    });
 
   // Accept anything pasted: a bare link, or share text like "Product name https://…".
   function takeLink(raw: string) {
@@ -162,6 +235,8 @@ export function ItemForm({
         </>
       )}
 
+      <input ref={shotInput} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && readScreenshot(e.target.files[0])} />
+
       <label>
         Store link <span className="hint">(if you have one). Paste whatever you copied. We will find the link.</span>
         <input
@@ -187,7 +262,8 @@ export function ItemForm({
 
       {fetching && (
         <div className="card brand row">
-          <Spinner /> <span>Looking at the store page. This can take a few seconds.</span>
+          <Spinner />{" "}
+          <span>{slow ? "Still looking. Amazon can take up to 30 seconds. Please wait." : "Looking at the store page. This can take a few seconds."}</span>
         </div>
       )}
       {busy && !fetching && (
@@ -223,9 +299,20 @@ export function ItemForm({
           <button type="button" className="btn block" onClick={() => snapInput.current?.click()} disabled={busy}>
             📷 Take a photo of it
           </button>
+          <button type="button" className="btn block" onClick={() => shotInput.current?.click()} disabled={busy}>
+            🖼️ Use a screenshot of the page
+          </button>
+          <p className="small muted">
+            To take a screenshot on an iPhone, press the side button and the volume-up button at the same time. On an Android phone, press the power button and the volume-down button together. Then tap the button above and pick it.
+          </p>
           {store === "Amazon" && (
             <p className="small muted">Tip: in the Amazon app, tap Share, then Copy. The name often comes with the link. Paste it here.</p>
           )}
+        </div>
+      )}
+      {!fetching && lookup === "noshot" && (
+        <div className="card highlight">
+          <strong>We could not read that screenshot.</strong> Please try one that shows the whole product page. Or just type what it is below.
         </div>
       )}
       {note && <p className="small muted">{note}</p>}
