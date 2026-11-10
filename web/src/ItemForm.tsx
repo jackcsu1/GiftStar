@@ -1,8 +1,12 @@
 import { useRef, useState } from "react";
 import { api, blobToDataUrl, imageSrc, shrinkImage } from "./api";
+import { parseShared, storeName } from "./links";
 import { Spinner, useAction } from "./ui";
 
 export type ItemFields = { title: string; url: string; image: string; price: string; notes: string; priority: number; qty: number };
+
+type Unfurl = { url: string; title: string; image: string; price: string; images: string[]; found: boolean };
+type Lookup = "idle" | "good" | "nophoto" | "guessed" | "failed" | "nolink";
 
 const EMPTY: ItemFields = { title: "", url: "", image: "", price: "", notes: "", priority: 2, qty: 1 };
 
@@ -21,31 +25,59 @@ export function ItemForm({
   const [photos, setPhotos] = useState<string[]>(initial?.image ? [initial.image] : []);
   const [fetching, setFetching] = useState(false);
   const [note, setNote] = useState("");
+  const [lookup, setLookup] = useState<Lookup>("idle");
+  const [store, setStore] = useState("");
+  const looked = useRef(new Set<string>());
+  const titleInput = useRef<HTMLInputElement>(null);
   const { busy, run } = useAction();
   const photoInput = useRef<HTMLInputElement>(null);
   const snapInput = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<ItemFields>) => setF((prev) => ({ ...prev, ...patch }));
   const isNew = !initial?.title;
 
-  async function fetchDetails(url: string) {
-    if (!/^https?:\/\//i.test(url.trim())) return;
+  async function fetchDetails(raw: string) {
+    const url = raw.trim();
+    if (!/^https?:\/\//i.test(url) || looked.current.has(url)) return;
+    looked.current.add(url);
     setFetching(true);
     setNote("");
+    setLookup("idle");
     try {
-      const d = await api<{ url: string; title: string; image: string; price: string; images: string[] }>("POST", "/unfurl", { url: url.trim() });
+      const d = await api<Unfurl>("POST", "/unfurl", { url });
+      const shown = d.url || url;
+      looked.current.add(shown);
+      setStore(storeName(shown) || storeName(url));
       setF((prev) => ({
         ...prev,
+        url: prev.url.trim() === url ? shown : prev.url,
         title: prev.title || d.title,
         price: prev.price || d.price,
         image: prev.image || d.image,
       }));
       setPhotos((prev) => [...new Set([...prev, ...d.images])]);
-      if (!d.image) setNote("We couldn't grab a photo from that store. You can add your own below.");
+      setLookup(d.found ? (d.image ? "good" : "nophoto") : d.title ? "guessed" : "failed");
     } catch {
-      setNote("We couldn't read that link. Fill in the details yourself.");
+      setStore(storeName(url));
+      setLookup("failed");
     } finally {
       setFetching(false);
     }
+  }
+
+  // Accept anything pasted: a bare link, or share text like "Product name https://…".
+  function takeLink(raw: string) {
+    const { url, title } = parseShared(raw);
+    if (!url) {
+      if (title) {
+        // Not a link: keep the words as the name, and don't leave them in the link box.
+        setF((prev) => ({ ...prev, url: prev.url.trim() === raw.trim() ? "" : prev.url, title: prev.title || title }));
+        setLookup("nolink");
+      }
+      return false;
+    }
+    setF((prev) => ({ ...prev, url, title: prev.title || title }));
+    fetchDetails(url);
+    return true;
   }
 
   const uploadPhoto = (file: File) =>
@@ -87,28 +119,36 @@ export function ItemForm({
             📷 Snap a photo of it
           </button>
           <input ref={snapInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => e.target.files?.[0] && snap(e.target.files[0])} />
-          <p className="small muted center">or paste a link from any store</p>
+          <p className="small muted center">or paste a link from any store below</p>
         </>
       )}
 
       <label>
-        Link
+        Store link <span className="hint">(if you have one). Paste whatever you copied. We will find the link.</span>
         <input
-          type="url"
+          type="text"
           inputMode="url"
-          placeholder="https://…"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="Paste here"
           value={f.url}
           onChange={(e) => set({ url: e.target.value })}
           onPaste={(e) => {
             const pasted = e.clipboardData.getData("text");
-            setTimeout(() => fetchDetails(pasted), 0);
+            if (!pasted.trim()) return;
+            e.preventDefault();
+            takeLink(pasted);
           }}
-          onBlur={() => isNew && !f.title && fetchDetails(f.url)}
+          onBlur={() => {
+            if (f.url.trim() && isNew) takeLink(f.url);
+          }}
         />
       </label>
+
       {fetching && (
-        <div className="row muted small">
-          <Spinner /> Getting details from the store…
+        <div className="card brand row">
+          <Spinner /> <span>Looking at the store page. This can take a few seconds.</span>
         </div>
       )}
       {busy && !fetching && (
@@ -116,11 +156,44 @@ export function ItemForm({
           <Spinner /> Working on it…
         </div>
       )}
+      {!fetching && lookup === "good" && (
+        <div className="card soft">
+          <strong>✓ Got it!</strong> Please check the name, picture and price below. Then tap <strong>Save it</strong>.
+        </div>
+      )}
+      {!fetching && lookup === "nophoto" && (
+        <div className="card soft">
+          <strong>✓ We found the name.</strong> We could not get a picture. You can tap <strong>+ Add</strong> below to add one. Or just tap <strong>Save it</strong>.
+        </div>
+      )}
+      {!fetching && lookup === "guessed" && (
+        <div className="card highlight">
+          <strong>We guessed the name from the link.</strong> Please check it below. You can fix it if it is wrong. A photo is nice, but you do not need one.
+        </div>
+      )}
+      {!fetching && lookup === "nolink" && (
+        <div className="card soft">We did not find a web link in that. That is okay. Just type what it is below.</div>
+      )}
+      {!fetching && lookup === "failed" && (
+        <div className="card highlight stack">
+          <strong>{store ? `${store} will not let us read that page.` : "We could not read that page."}</strong>
+          <p>That is not your fault. Some stores block this. Your link is saved. Please:</p>
+          <button type="button" className="btn block" onClick={() => titleInput.current?.focus()}>
+            ✏️ Type what it is
+          </button>
+          <button type="button" className="btn block" onClick={() => snapInput.current?.click()} disabled={busy}>
+            📷 Take a photo of it
+          </button>
+          {store === "Amazon" && (
+            <p className="small muted">Tip: in the Amazon app, tap Share, then Copy. The name often comes with the link. Paste it here.</p>
+          )}
+        </div>
+      )}
       {note && <p className="small muted">{note}</p>}
 
       <label>
-        What is it?
-        <input value={f.title} onChange={(e) => set({ title: e.target.value })} required maxLength={300} />
+        What is it? <span className="hint">For example: Blue sweater, size large</span>
+        <input ref={titleInput} value={f.title} onChange={(e) => set({ title: e.target.value })} required maxLength={300} />
       </label>
 
       <div className="stack" style={{ gap: 6 }}>
@@ -142,7 +215,7 @@ export function ItemForm({
 
       <div className="row" style={{ alignItems: "flex-start" }}>
         <label style={{ flex: 1, minWidth: 120 }}>
-          Price
+          Price <span className="hint">(if you know)</span>
           <input value={f.price} onChange={(e) => set({ price: e.target.value })} placeholder="$" maxLength={40} />
         </label>
         {kind === "wish" && (
@@ -169,9 +242,11 @@ export function ItemForm({
         <textarea value={f.notes} onChange={(e) => set({ notes: e.target.value })} maxLength={2000} />
       </label>
 
+      {!f.title.trim() && <p className="small muted center">Type what it is above. Then the Save button will work.</p>}
+
       <div className="row">
         <button className="btn primary" style={{ flex: 1 }} disabled={busy || !f.title.trim()}>
-          Save
+          Save it
         </button>
         <button type="button" className="btn" onClick={onCancel}>
           Cancel

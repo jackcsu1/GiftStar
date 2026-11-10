@@ -2,13 +2,15 @@
 // Many big stores block automated requests, so every field is optional and the
 // app always lets people type details or upload a photo themselves.
 
-export type Unfurled = { url: string; title: string; image: string; price: string; images: string[] };
+// `found` is true only when we read real details from the store's page.
+// When it is false, `title` (if any) is just a guess from the link.
+export type Unfurled = { url: string; title: string; image: string; price: string; images: string[]; found: boolean };
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 
 export async function unfurl(url: string): Promise<Unfurled> {
-  const out: Unfurled = { url, title: "", image: "", price: "", images: [] };
+  const out: Unfurled = { url: cleanUrl(url), title: "", image: "", price: "", images: [], found: false };
   let html = "";
   try {
     const res = await fetch(url, {
@@ -20,7 +22,7 @@ export async function unfurl(url: string): Promise<Unfurled> {
       redirect: "follow",
       signal: AbortSignal.timeout(10000),
     });
-    out.url = res.url || url;
+    out.url = cleanUrl(res.url || url);
     if (res.ok && (res.headers.get("Content-Type") || "").includes("html")) {
       html = (await res.text()).slice(0, 2_000_000);
     }
@@ -28,7 +30,7 @@ export async function unfurl(url: string): Promise<Unfurled> {
     // fall through to whatever we can learn from the URL itself
   }
 
-  if (html) {
+  if (html && !looksBlocked(html)) {
     const product = jsonLdProduct(html);
     const meta = (name: string) => metaContent(html, name);
 
@@ -58,6 +60,9 @@ export async function unfurl(url: string): Promise<Unfurled> {
       product.price ||
       formatPrice(meta("product:price:amount") || meta("og:price:amount"), meta("product:price:currency") || meta("og:price:currency")) ||
       match(html, /class="a-offscreen">\s*(\$[\d,]+\.?\d*)\s*</);
+    out.found = !!(clean(out.title) || out.image);
+  } else {
+    out.title = "";
   }
 
   if (!out.title) out.title = titleFromUrl(out.url);
@@ -173,4 +178,32 @@ function clean(s: string) {
     .replace(/\s*[|:-]\s*(Amazon\.com|Target|Walmart\.com|Etsy|Best Buy)\s*$/i, "")
     .replace(/^Amazon\.com\s*:\s*/i, "")
     .trim();
+}
+
+// Stores sometimes answer "200 OK" with a robot-check page instead of the product.
+const BLOCKED_TITLE =
+  /robot check|access denied|just a moment|attention required|are you a (human|robot)|captcha|pardon our interruption|verify you are|request blocked|security check|too many requests|service unavailable/i;
+
+function looksBlocked(html: string) {
+  const title = match(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (BLOCKED_TITLE.test(title)) return true;
+  return html.length < 5000 && /captcha|automated access|unusual traffic/i.test(html);
+}
+
+// Remove tracking junk so saved links are short and tidy. Amazon links shrink to /dp/<code>.
+const TRACKING =
+  /^(utm_.*|fbclid|gclid|msclkid|igshid|mc_cid|mc_eid|srsltid|irclickid|affid|clickid|ref|ref_|tag|linkcode|linkid|pd_rd_.*|pf_rd_.*|cv_ct_.*)$/i;
+
+function cleanUrl(raw: string) {
+  try {
+    const u = new URL(raw);
+    if (/(^|\.)amazon\.[a-z.]+$/i.test(u.hostname)) {
+      const m = u.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})/i);
+      if (m) return `https://${u.hostname}/dp/${m[1].toUpperCase()}`;
+    }
+    for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
+    return u.toString();
+  } catch {
+    return raw;
+  }
 }
